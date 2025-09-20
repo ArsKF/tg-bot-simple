@@ -1,3 +1,4 @@
+import requests
 import telebot
 
 from config import config, logger
@@ -11,10 +12,32 @@ bot.set_my_commands(
         telebot.types.BotCommand(command='help', description='Help message'),
         telebot.types.BotCommand(command='about', description='About the bot'),
         telebot.types.BotCommand(command='sum', description='Summation of digits'),
-        telebot.types.BotCommand(command='confirm', description='Confirm action')
+        telebot.types.BotCommand(command='confirm', description='Confirm action'),
+        telebot.types.BotCommand(command='weather', description='Get weather'),
     ]
 )
 logger.info('Bot commands loaded.')
+
+
+def fetch_weather_moscow_open_meteo() -> str:
+    url = "https://api.open-meteo.com/v1/forecast"
+
+    params = {
+        "latitude": 55.7558,
+        "longitude": 37.6173,
+        "current": "temperature_2m",
+        "timezone": "Europe/Moscow"
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=5)
+        r.raise_for_status()
+        t = r.json()["current"]["temperature_2m"]
+
+        return f"Москва: сейчас {round(t)}°C"
+
+    except Exception:
+        return "Не удалось получить погоду."
 
 
 def sum_process(text: str) -> str:
@@ -37,8 +60,9 @@ def sum_process(text: str) -> str:
 def create_keyboard() -> telebot.types.ReplyKeyboardMarkup:
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    keyboard.row('О боте', 'Сумма')
-    keyboard.row('Помощь', 'Скрыть клавиатуру')
+    keyboard.row('Погода', 'Сумма')
+    keyboard.row('О боте', 'Помощь')
+    keyboard.row('Скрыть клавиатуру')
 
     return keyboard
 
@@ -51,7 +75,7 @@ def send_start(message: telebot.types.Message):
 
 @bot.message_handler(commands=['help'])
 def send_help(message: telebot.types.Message):
-    bot.reply_to(message, '/start - Начать\n/help - Помощь\n/about - О боте\n/sum - Суммирование чисел\n/confirm - Подтвердить действие')
+    bot.reply_to(message, '/start - Начать\n/help - Помощь\n/about - О боте\n/sum - Суммирование чисел\n/confirm - Подтвердить действие\n/weather - Погода')
     logger.info(f'Sent help message for {message.from_user.id} ({message.from_user.first_name}).')
 
 
@@ -88,6 +112,14 @@ def send_confirm(message: telebot.types.Message):
     logger.info(f'Sent confirm message for {message.from_user.id} ({message.from_user.first_name}).')
 
 
+@bot.message_handler(commands=['weather'])
+def send_weather(message: telebot.types.Message):
+    weather = fetch_weather_moscow_open_meteo()
+
+    bot.reply_to(message, weather)
+    logger.info(f'Sent weather message for {message.from_user.id} ({message.from_user.first_name}).')
+
+
 @bot.message_handler(func=lambda message: message.text == 'Помощь')
 def send_help_button(message: telebot.types.Message):
     send_help(message)
@@ -111,6 +143,12 @@ def send_sum_button(message: telebot.types.Message):
 def hide_keyboard_button(message: telebot.types.Message):
     hide_keyboard(message)
     logger.info(f'Process keyboard button "Скрыть клавиатуру" for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(func=lambda message: message.text == 'Погода')
+def send_weather_button(message: telebot.types.Message):
+    send_weather(message)
+    logger.info(f'Process keyboard button "Погода" for {message.from_user.id} ({message.from_user.first_name}).')
 
 
 def send_text_sum(message: telebot.types.Message):
