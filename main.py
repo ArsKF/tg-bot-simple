@@ -40,7 +40,7 @@ def fetch_weather_moscow_open_meteo() -> str:
         return "Не удалось получить погоду."
 
 
-def sum_process(text: str) -> str:
+def parse_number(text: str) -> list[int]:
     tokens = text.strip().replace(',', ' ').split()
     numbers = []
 
@@ -48,14 +48,36 @@ def sum_process(text: str) -> str:
         if token.replace('.', '').lstrip('-').isdigit():
             numbers.append(int(token))
 
+    logger.debug(f'Parsing numbers: {text}. Tokens: {tokens} Result: {numbers}')
+
+    return numbers
+
+
+def sum_process(text: str) -> str:
+    numbers = parse_number(text)
+
     if not numbers:
         result = 'В сообщении нет цифр.\nПример использования команды: /sum 2 3 10'
     else:
         result = f'Сумма: {sum(numbers)}'
 
-    logger.debug(f'Summation of numbers: {tokens}. Result: {result}')
+    logger.debug(f'Summation of numbers: {text}. Result: {result}')
 
     return result
+
+
+def max_process(text: str) -> str:
+    numbers = parse_number(text)
+
+    if not numbers:
+        result = 'В сообщении нет цифр.\nПример использования команды: /max 1 3 7'
+    else:
+        result = f'Максимум: {max(numbers)}'
+
+    logger.debug(f'Maximum numbers: {text}. Result: {result}')
+
+    return result
+
 
 def create_keyboard() -> telebot.types.ReplyKeyboardMarkup:
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -93,10 +115,24 @@ def send_sum(message: telebot.types.Message):
     logger.info(f'Sent sum message for {message.from_user.id} ({message.from_user.first_name}).')
 
 
+@bot.message_handler(commands=['max'])
+def send_max(message: telebot.types.Message):
+    text = max_process(message.text.replace('/max', ''))
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent max message for {message.from_user.id} ({message.from_user.first_name}).')
+
+
 @bot.message_handler(commands=['hide'])
 def hide_keyboard(message: telebot.types.Message):
     bot.send_message(message.chat.id, 'Клавиатура спрятана', reply_markup=telebot.types.ReplyKeyboardRemove())
     logger.info(f'Keyboard remove for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['show'])
+def show_keyboard(message: telebot.types.Message):
+    bot.send_message(message.chat.id, 'Клавиатура активна', reply_markup=create_keyboard())
+    logger.info(f'Keyboard show for {message.from_user.id} ({message.from_user.first_name}).')
 
 
 @bot.message_handler(commands=['confirm'])
