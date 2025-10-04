@@ -8,6 +8,7 @@ import dotenv
 @dataclass
 class Config:
     token: str
+    db_path: str
     log_file: str
     log_level: str
 
@@ -48,6 +49,7 @@ def get_config() -> Config:
 
     return Config(
         token=os.getenv('TOKEN'),
+        db_path=os.getenv('DB_PATH'),
         log_file=os.getenv('LOG_FILE') or './bot.log',
         log_level=os.getenv('LOG_LEVEL') or 'INFO',
     )
