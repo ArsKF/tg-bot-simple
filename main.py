@@ -1,18 +1,19 @@
-from typing import Literal
+from typing import List, Literal
 
 import requests
 import telebot
 
 from config import config, logger
 from db import init_db, add_note, list_notes, find_note, count_notes
-from db import update_note, delete_note, count_notes
+from db import update_note, delete_note, list_models, get_active_model, set_active_models
+from openrouter_client import chat_once, OpenRouterError
 
 NOTE_MESSAGE_PATTERN = '''Заметка: {{note}}\nСоздана: {{created_at}}'''
 
 bot = telebot.TeleBot(config.token)
 
 
-def setup_bot_commands(bot: telebot.TeleBot):
+def _setup_bot_commands(bot: telebot.TeleBot):
     bot.set_my_commands(
         [
             telebot.types.BotCommand(command='start', description='Start bot'),
@@ -27,12 +28,15 @@ def setup_bot_commands(bot: telebot.TeleBot):
             telebot.types.BotCommand(command='edit_note', description='Edit note'),
             telebot.types.BotCommand(command='delete_note', description='Delete note'),
             telebot.types.BotCommand(command='count_notes', description='Count of note'),
+            telebot.types.BotCommand(command='model', description='Set active model'),
+            telebot.types.BotCommand(command='models', description='Get list of AI models'),
+            telebot.types.BotCommand(command='ask', description='Ask the model a question')
         ]
     )
     logger.info('Bot commands loaded.')
 
 
-def fetch_weather_moscow_open_meteo() -> str:
+def _fetch_weather_moscow_open_meteo() -> str:
     url = "https://api.open-meteo.com/v1/forecast"
 
     params = {
@@ -53,7 +57,7 @@ def fetch_weather_moscow_open_meteo() -> str:
         return "Не удалось получить погоду."
 
 
-def parse_number(text: str) -> list[int]:
+def _parse_number(text: str) -> list[int]:
     tokens = text.strip().replace(',', ' ').split()
     numbers = []
 
@@ -66,8 +70,8 @@ def parse_number(text: str) -> list[int]:
     return numbers
 
 
-def sum_process(text: str) -> str:
-    numbers = parse_number(text)
+def _sum_process(text: str) -> str:
+    numbers = _parse_number(text)
 
     if not numbers:
         result = 'В сообщении нет цифр.\nПример использования команды: /sum 2 3 10'
@@ -79,8 +83,8 @@ def sum_process(text: str) -> str:
     return result
 
 
-def max_process(text: str) -> str:
-    numbers = parse_number(text)
+def _max_process(text: str) -> str:
+    numbers = _parse_number(text)
 
     if not numbers:
         result = 'В сообщении нет цифр.\nПример использования команды: /max 1 3 7'
@@ -92,7 +96,7 @@ def max_process(text: str) -> str:
     return result
 
 
-def create_keyboard() -> telebot.types.ReplyKeyboardMarkup:
+def _create_keyboard() -> telebot.types.ReplyKeyboardMarkup:
     keyboard = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
 
     keyboard.row('Погода', 'Сумма')
@@ -102,7 +106,7 @@ def create_keyboard() -> telebot.types.ReplyKeyboardMarkup:
     return keyboard
 
 
-def create_note_keyboard(
+def _create_note_keyboard(
         cmd_type: Literal['list', 'find'],
         count: int,
         offset: int,
@@ -141,9 +145,18 @@ def create_note_keyboard(
     return keyboard
 
 
+def _build_messages(text: str) -> List[dict[str, str]]:
+    system = 'Ты отвечаешь кратко и по-существу\nПравила:\n1. Технические ответы давай конкретно и по пунктам.'
+
+    return [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': text}
+    ]
+
+
 @bot.message_handler(commands=['start'])
 def send_start(message: telebot.types.Message):
-    bot.reply_to(message, 'Привет! Я простой бот! Напиши /help', reply_markup=create_keyboard())
+    bot.reply_to(message, 'Привет! Я простой бот! Напиши /help', reply_markup=_create_keyboard())
     logger.info(f'Sent start message for {message.from_user.id} ({message.from_user.first_name}).')
 
 
@@ -161,7 +174,7 @@ def send_about(message: telebot.types.Message):
 
 @bot.message_handler(commands=['sum'])
 def send_sum(message: telebot.types.Message):
-    text = sum_process(message.text.replace('/sum', ''))
+    text = _sum_process(message.text.replace('/sum', ''))
 
     bot.reply_to(message, text)
     logger.info(f'Sent sum message for {message.from_user.id} ({message.from_user.first_name}).')
@@ -169,7 +182,7 @@ def send_sum(message: telebot.types.Message):
 
 @bot.message_handler(commands=['max'])
 def send_max(message: telebot.types.Message):
-    text = max_process(message.text.replace('/max', ''))
+    text = _max_process(message.text.replace('/max', ''))
 
     bot.reply_to(message, text)
     logger.info(f'Sent max message for {message.from_user.id} ({message.from_user.first_name}).')
@@ -183,7 +196,7 @@ def hide_keyboard(message: telebot.types.Message):
 
 @bot.message_handler(commands=['show'])
 def show_keyboard(message: telebot.types.Message):
-    bot.send_message(message.chat.id, 'Клавиатура активна', reply_markup=create_keyboard())
+    bot.send_message(message.chat.id, 'Клавиатура активна', reply_markup=_create_keyboard())
     logger.info(f'Keyboard show for {message.from_user.id} ({message.from_user.first_name}).')
 
 
@@ -202,7 +215,7 @@ def send_confirm(message: telebot.types.Message):
 
 @bot.message_handler(commands=['weather'])
 def send_weather(message: telebot.types.Message):
-    weather = fetch_weather_moscow_open_meteo()
+    weather = _fetch_weather_moscow_open_meteo()
 
     bot.reply_to(message, weather)
     logger.info(f'Sent weather message for {message.from_user.id} ({message.from_user.first_name}).')
@@ -237,7 +250,7 @@ def send_list_notes(message: telebot.types.Message):
         text = '\n\n'.join(notes_message_text)
 
         if count > 10:
-            reply_markup = create_note_keyboard('list', count, 0)
+            reply_markup = _create_note_keyboard('list', count, 0)
 
     else:
         text = 'Список заметок пуст'
@@ -263,7 +276,7 @@ def send_find_note(message: telebot.types.Message):
             text ='\n\n'.join(notes_message_text)
 
             if count > 10:
-                reply_markup = create_note_keyboard('find', count, 0, text=message_text)
+                reply_markup = _create_note_keyboard('find', count, 0, text=message_text)
 
         else:
             text = 'Ничего не найдено'
@@ -335,6 +348,71 @@ def send_count_notes(message: telebot.types.Message):
     logger.info(f'Sent count notes for {message.from_user.id} ({message.from_user.first_name}).')
 
 
+@bot.message_handler(commands=['models'])
+def send_cmd_models(message: telebot.types.Message):
+    items = list_models()
+
+    if items:
+        lines = ['Доступные модели:']
+
+        for model in items:
+            star = '*' if model['active'] else ''
+            lines.append(f'{star} {model["id"]}. {model["label"]} {model["key"]}')
+
+        lines.append('\nДля активации введите /model <ID>')
+        text = '\n'.join(lines)
+
+    else:
+        text = 'Список моделей пуст'
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent models for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['model'])
+def send_cmd_model(message: telebot.types.Message):
+    token = message.text.replace('/model', '').strip()
+
+    if not token:
+        active_model = get_active_model()
+        text = f'Текущая активная модель: {active_model["label"]} {active_model["key"]}\n Для смены модели введите /model <ID>'
+
+    elif not token.isdigit():
+        text = f'ID модели должен быть числом.\nПример активации модели: /model 1'
+
+    else:
+        active_model = set_active_models(int(token))
+        text = f'Активная модель переключена: {active_model["label"]} {active_model["key"]}'
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent model for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['ask'])
+def send_cmd_ask(message: telebot.types.Message):
+    token = message.text.replace('/ask', '').strip()
+
+    if not token:
+        text = 'Отсутствует текст вопроса. Пример использования:\n /ask Вопрос'
+
+    llm_message = _build_messages(token[:600])
+    model_key = get_active_model()['key']
+
+    try:
+        text, ms = chat_once(llm_message, model=model_key, temperature=0.2, max_tokens=400)
+        text = text.strip()[:4096]
+
+    except OpenRouterError as e:
+        text = f'Ошибка: {e}'
+
+    except Exception as e:
+        text = 'Непредвиденная ошибка'
+        logger.error(e)
+
+    bot.reply_to(message, text)
+    logger.info(f'sent ask for {message.from_user.id} ({message.from_user.first_name}).')
+
+
 @bot.message_handler(func=lambda message: message.text == 'Помощь')
 def send_help_button(message: telebot.types.Message):
     send_help(message)
@@ -367,7 +445,7 @@ def send_weather_button(message: telebot.types.Message):
 
 
 def send_text_sum(message: telebot.types.Message):
-    text = sum_process(message.text)
+    text = _sum_process(message.text)
 
     bot.reply_to(message, text)
     logger.info(f'Summarization from text for {message.from_user.id} ({message.from_user.first_name}).')
@@ -403,7 +481,7 @@ def send_notes(call: telebot.types.CallbackQuery):
         for note in notes
     ]
     text = '\n\n'.join(notes_message_text)
-    reply_markup = create_note_keyboard(cmd_type, int(count), int(offset), int(step), find_text)
+    reply_markup = _create_note_keyboard(cmd_type, int(count), int(offset), int(step), find_text)
 
     bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=reply_markup)
     logger.info(f'Process inline keyboard button "{call.data}" for {call.message.chat.id}.')
@@ -412,7 +490,7 @@ def send_notes(call: telebot.types.CallbackQuery):
 if __name__ == '__main__':
     init_db()
 
-    setup_bot_commands(bot)
+    _setup_bot_commands(bot)
 
     logger.info('Telegram Bot started.')
     bot.infinity_polling(skip_pending=True)

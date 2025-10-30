@@ -8,6 +8,7 @@ import dotenv
 @dataclass
 class Config:
     token: str
+    openrouter_api_key: str
     db_path: str
     log_file: str
     log_level: str
@@ -49,6 +50,7 @@ def get_config() -> Config:
 
     return Config(
         token=os.getenv('TOKEN'),
+        openrouter_api_key=os.getenv('OPENROUTER_API_KEY'),
         db_path=os.getenv('DB_PATH'),
         log_file=os.getenv('LOG_FILE') or './bot.log',
         log_level=os.getenv('LOG_LEVEL') or 'INFO',

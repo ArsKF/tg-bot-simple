@@ -15,19 +15,18 @@ def _connect():
     return conn
 
 
-def init_db():
-    schema = """
-    CREATE TABLE IF NOT EXISTS notes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL,
-        text TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """
+def create_notes_table():
+    schema = '''
+        CREATE TABLE IF NOT EXISTS notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        '''
 
     with _connect() as conn:
         conn.executescript(schema)
-        logger.info('Database initialized.')
 
 
 def add_note(user_id: int, text: str) -> int:
@@ -107,3 +106,113 @@ def count_notes(user_id: int, text = '') -> int:
         )
 
         return cur.fetchone()[0]
+
+
+def create_models_table():
+    schema = '''
+    CREATE TABLE IF NOT EXISTS models (
+        id INTEGER PRIMARY KEY,
+        key TEXT NOT NULL UNIQUE,
+        label TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1))
+    );
+    
+    CREATE UNIQUE INDEX IF NOT EXISTS ux_models_single_active
+    ON models(active) WHERE active=1;
+    '''
+
+    with _connect() as conn:
+        conn.executescript(schema)
+
+
+def list_models() -> list[dict[str, str | bool]]:
+    with _connect() as conn:
+        cur = conn.execute(
+            '''SELECT id, key, label, active
+            FROM models
+            ORDER BY id'''
+        )
+        rows = cur.fetchall()
+        result = [
+            {
+                'id': row['id'],
+                'key': row['key'],
+                'label': row['label'],
+                'active': bool(row['active'])
+            }
+            for row in rows
+        ]
+
+        return result
+
+
+def get_active_model() -> dict[str, str | bool]:
+    with _connect() as conn:
+        result = {}
+
+        cur = conn.execute(
+            '''SELECT id, key, label
+            FROM models
+            WHERE active=1'''
+        )
+        row = cur.fetchone()
+
+        if not row:
+            cur = conn.execute(
+                '''SELECT id, key, label
+                FROM models
+                ORDER BY id
+                LIMIT 1'''
+            )
+            row = cur.fetchone()
+
+        if not row:
+            raise RuntimeError('В реестре моделей нет записей.')
+
+        conn.execute(
+            '''UPDATE models
+            SET active = CASE WHEN id=?
+            THEN 1 ELSE 0 END''',
+            (row['id'],)
+        )
+
+        result.update({
+            'id': row['id'],
+            'key': row['key'],
+            'label': row['label'],
+            'active': True
+        })
+
+        return result
+
+
+def set_active_models(model_id: int) -> dict[str, str | bool]:
+    with _connect() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        exits = conn.execute(
+            '''SELECT 1
+            FROM models
+            WHERE id=?''',
+            (model_id,)
+        ).fetchone()
+
+        if not exits:
+            conn.rollback()
+            raise ValueError('Неизвестный ID модели')
+
+        conn.execute(
+            '''UPDATE models
+            SET active = CASE WHEN id=?
+            THEN 1 ELSE 0 END''',
+            (model_id,)
+        )
+        conn.commit()
+
+        return get_active_model()
+
+
+def init_db():
+    create_notes_table()
+    create_models_table()
+
+    logger.info('Database initialized.')
