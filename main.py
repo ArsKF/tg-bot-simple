@@ -7,7 +7,7 @@ import telebot
 from config import config, logger
 from db import add_note, count_notes, delete_note, find_note, init_db, list_notes, set_user_character, update_note
 from db import get_active_model, get_model_by_id, list_models, set_active_models
-from db import get_character_by_id, get_user_character, list_characters
+from db import get_character_by_id, get_user_character, list_characters, update_character_name_by_id
 from openrouter_client import chat_once, OpenRouterError
 
 NOTE_MESSAGE_PATTERN = '''Заметка: {{note}}\nСоздана: {{created_at}}'''
@@ -37,6 +37,7 @@ def _setup_bot_commands(bot: telebot.TeleBot):
             telebot.types.BotCommand(command='ask_random', description='Ask the random character'),
             telebot.types.BotCommand(command='characters', description='Get list of characters'),
             telebot.types.BotCommand(command='character', description='Get active character or set new character'),
+            telebot.types.BotCommand(command='character_name', description='Change character name'),
             telebot.types.BotCommand(command='whoami', description='Get active model and active character')
         ]
     )
@@ -548,6 +549,30 @@ def send_cmd_character(message: telebot.types.Message):
 
         except ValueError:
             text = 'Неизвестный ID персонажа. Используйте /characters для получения списка персонажей'
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent character for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['character_name'])
+def send_cmd_character_name(message: telebot.types.Message):
+    tokens = message.text.replace('/character_name', '').strip().split(maxsplit=1)
+
+    if not tokens:
+        text = 'Отсутствуют аргументы. Пример использования:\n/character_name <ID> Имя'
+
+    elif len(tokens) != 2:
+        text = 'Отсутствуют аргументы или их слишком много. Пример использования:\n/character_name <ID> Имя'
+
+    elif not tokens[0].isdigit():
+        text = 'ID не является числом. Пример использования:\n /character_name 1 Имя'
+
+    else:
+        if update_character_name_by_id(int(tokens[0]), tokens[1]):
+            text = 'Имя персонажа успешно изменено.'
+
+        else:
+             text = 'Неизвестный ID персонажа. Используйте /characters для получения списка персонажей'
 
     bot.reply_to(message, text)
     logger.info(f'Sent character for {message.from_user.id} ({message.from_user.first_name}).')

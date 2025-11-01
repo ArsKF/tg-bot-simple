@@ -258,7 +258,7 @@ def list_characters() -> list[dict[str, str | int]]:
         } for row in rows]
 
 
-def get_character_by_id(character_id: int) -> dict[str, str | int] | None:
+def get_character_by_id(character_id: int) -> dict[str, str | int]:
     with _connect() as conn:
         cur = conn.execute(
             '''SELECT id, name, prompt FROM characters
@@ -267,11 +267,27 @@ def get_character_by_id(character_id: int) -> dict[str, str | int] | None:
         )
         row = cur.fetchone()
 
+        if row is None:
+            raise ValueError('Неизвестный ID персонажа.')
+
         return {
             'id': row['id'],
             'name': row['name'],
             'prompt': row['prompt']
-        } if row else None
+        }
+
+
+def update_character_name_by_id(character_id: int, name: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute(
+            '''UPDATE characters
+            SET name=?
+            WHERE id=?''',
+            (name, character_id)
+        )
+        conn.commit()
+
+        return cur.rowcount > 0
 
 
 def get_character_prompt_for_user(user_id: int) -> str:
