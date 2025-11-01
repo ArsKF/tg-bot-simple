@@ -186,6 +186,26 @@ def get_active_model() -> dict[str, str | bool]:
         return result
 
 
+def get_model_by_id(id: int) -> dict[str, str | bool]:
+    with _connect() as conn:
+        cur = conn.execute(
+            '''SELECT id, key, label
+            FROM models
+            WHERE id=?''',
+            (id,)
+        )
+        row = cur.fetchone()
+
+        if not row:
+            raise ValueError('Неизвестный ID модели.')
+
+        return {
+            'id': row['id'],
+            'key': row['key'],
+            'label': row['label']
+        }
+
+
 def set_active_models(model_id: int) -> dict[str, str | bool]:
     with _connect() as conn:
         conn.execute('BEGIN IMMEDIATE')

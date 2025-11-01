@@ -5,10 +5,9 @@ import requests
 import telebot
 
 from config import config, logger
-from db import init_db, add_note, list_notes, find_note, count_notes, update_note, delete_note, set_user_character, \
-    get_character_by_id
-from db import list_models, get_active_model, set_active_models
-from db import get_user_character, list_characters
+from db import add_note, count_notes, delete_note, find_note, init_db, list_notes, set_user_character, update_note
+from db import get_active_model, get_model_by_id, list_models, set_active_models
+from db import get_character_by_id, get_user_character, list_characters
 from openrouter_client import chat_once, OpenRouterError
 
 NOTE_MESSAGE_PATTERN = '''Заметка: {{note}}\nСоздана: {{created_at}}'''
@@ -34,6 +33,7 @@ def _setup_bot_commands(bot: telebot.TeleBot):
             telebot.types.BotCommand(command='model', description='Set active model'),
             telebot.types.BotCommand(command='models', description='Get list of AI models'),
             telebot.types.BotCommand(command='ask', description='Ask the model a question'),
+            telebot.types.BotCommand(command='ask_model', description='Ask a question a specific model'),
             telebot.types.BotCommand(command='ask_random', description='Ask the random character'),
             telebot.types.BotCommand(command='characters', description='Get list of characters'),
             telebot.types.BotCommand(command='character', description='Get active character or set new character'),
@@ -431,6 +431,43 @@ def send_cmd_ask(message: telebot.types.Message):
 
     bot.reply_to(message, text)
     logger.info(f'Sent ask for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['ask_model'])
+def send_cmd_ask_model(message: telebot.types.Message):
+    tokens = message.text.replace('/ask_model', '').strip().split(maxsplit=1)
+    model_key = None
+
+    if not tokens:
+        text = 'Отсутствуют аргументы. Пример использования:\n/ask_model <ID> Вопрос'
+
+    elif len(tokens) != 2:
+        text = 'Отсутствуют аргументы или их слишком много. Пример использования:\n/ask_model <ID> Вопрос'
+
+    elif not tokens[0].isdigit():
+        text = 'ID не является числом. Пример использования:\n /ask_model 1 Вопрос'
+
+    else:
+        try:
+            llm_message = _build_messages(message.from_user.id, tokens[1][:600])
+            model_key = get_model_by_id(int(tokens[0]))['key']
+
+            try:
+                text, ms = chat_once(llm_message, model=model_key, temperature=0.2, max_tokens=400)
+                text = text.strip()[:4096]
+
+            except OpenRouterError as e:
+                text = f'Ошибка: {e}'
+
+            except Exception as e:
+                text = 'Непредвиденная ошибка'
+                logger.error(e)
+
+        except ValueError:
+            text = 'Неизвестный ID модели. Используйте /models для получения списка моделей'
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent ask {model_key} for {message.from_user.id} ({message.from_user.first_name}).')
 
 
 @bot.message_handler(commands=['ask_random'])
