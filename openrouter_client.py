@@ -59,7 +59,7 @@ def chat_once(messages: List[Dict],
     t0 = time.perf_counter()
 
     request = requests.post(
-        config.openrouter_api_key,
+        OPENROUTER_API_URL,
         json=payload,
         headers=headers,
         timeout=timeout_s

@@ -211,8 +211,133 @@ def set_active_models(model_id: int) -> dict[str, str | bool]:
         return get_active_model()
 
 
+def create_chaeacters_table():
+    schema = '''
+    CREATE TABLE IF NOT EXISTS characters (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        prompt TEXT NOT NULL
+    );
+    '''
+
+    with _connect() as conn:
+        conn.executescript(schema)
+
+
+def list_characters() -> list[dict[str, str | int]]:
+    with _connect() as conn:
+        cur = conn.execute(
+            '''SELECT id, name FROM characters
+            ORDER BY id'''
+        )
+        rows = cur.fetchall()
+
+        return [{
+            'id': row['id'],
+            'name': row['name']
+        } for row in rows]
+
+
+def get_character_by_id(character_id: int) -> dict[str, str | int] | None:
+    with _connect() as conn:
+        cur = conn.execute(
+            '''SELECT id, name, prompt FROM characters
+            WHERE id=?''',
+            (character_id,)
+        )
+        row = cur.fetchone()
+
+        return {
+            'id': row['id'],
+            'name': row['name'],
+            'prompt': row['prompt']
+        } if row else None
+
+
+def get_character_prompt_for_user(user_id: int) -> str:
+    return get_user_character(user_id)['prompt']
+
+
+def create_user_character_links_table():
+    schema = '''
+    CREATE TABLE IF NOT EXISTS user_character (
+    user_id INTEGER PRIMARY KEY,
+    character_id INTEGER NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+    FOREIGN KEY(character_id) REFERENCES characters(id)
+    );
+    '''
+
+    with _connect() as conn:
+        conn.executescript(schema)
+
+
+def set_user_character(user_id: int, character_id: int) -> dict[str, str | int] | None:
+    character = get_character_by_id(character_id)
+
+    if not character:
+        raise ValueError('Неизвестный ID персонажа')
+
+    with _connect() as conn:
+        conn.execute(
+            '''INSERT INTO user_character (user_id, character_id)
+            VALUES(?, ?)
+            ON CONFLICT (user_id)
+            DO UPDATE SET character_id = excluded.character_id''',
+            (user_id, character_id)
+        )
+
+    return character
+
+
+def get_user_character(user_id: int) -> dict[str, str | int] | None:
+    with _connect() as conn:
+        row = conn.execute(
+            '''SELECT p.id, p.name, p.prompt
+            FROM user_character up
+            JOIN characters p ON p.id = up.character_id
+            WHERE up.user_id = ?''',
+            (user_id,)
+        ).fetchone()
+
+        if row:
+            return {
+                'id': row['id'],
+                'name': row['name'],
+                'prompt': row['prompt']
+            }
+
+        row = conn.execute(
+            '''SELECT id, name, prompt FROM characters
+            WHERE id=1'''
+        ).fetchone()
+
+        if row:
+            return {
+                'id': row['id'],
+                'name': row['name'],
+                'prompt': row['prompt']
+            }
+
+        row = conn.execute(
+            '''SELECT id, name, prompt FROM characters
+            ORDER BY id LIMIT 1'''
+        ).fetchone()
+
+        if row:
+            return {
+                'id': row['id'],
+                'name': row['name'],
+                'prompt': row['prompt']
+            }
+
+        raise RuntimeError('Таблица characters пуста.')
+
+
 def init_db():
     create_notes_table()
     create_models_table()
+    create_chaeacters_table()
+    create_user_character_links_table()
 
     logger.info('Database initialized.')

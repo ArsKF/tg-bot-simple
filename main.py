@@ -1,11 +1,14 @@
+import random
 from typing import List, Literal
 
 import requests
 import telebot
 
 from config import config, logger
-from db import init_db, add_note, list_notes, find_note, count_notes
-from db import update_note, delete_note, list_models, get_active_model, set_active_models
+from db import init_db, add_note, list_notes, find_note, count_notes, update_note, delete_note, set_user_character, \
+    get_character_by_id
+from db import list_models, get_active_model, set_active_models
+from db import get_user_character, list_characters
 from openrouter_client import chat_once, OpenRouterError
 
 NOTE_MESSAGE_PATTERN = '''Заметка: {{note}}\nСоздана: {{created_at}}'''
@@ -30,7 +33,11 @@ def _setup_bot_commands(bot: telebot.TeleBot):
             telebot.types.BotCommand(command='count_notes', description='Count of note'),
             telebot.types.BotCommand(command='model', description='Set active model'),
             telebot.types.BotCommand(command='models', description='Get list of AI models'),
-            telebot.types.BotCommand(command='ask', description='Ask the model a question')
+            telebot.types.BotCommand(command='ask', description='Ask the model a question'),
+            telebot.types.BotCommand(command='ask_random', description='Ask the random character'),
+            telebot.types.BotCommand(command='characters', description='Get list of characters'),
+            telebot.types.BotCommand(command='character', description='Get active character or set new character'),
+            telebot.types.BotCommand(command='whoami', description='Get active model and active character')
         ]
     )
     logger.info('Bot commands loaded.')
@@ -145,8 +152,20 @@ def _create_note_keyboard(
     return keyboard
 
 
-def _build_messages(text: str) -> List[dict[str, str]]:
-    system = 'Ты отвечаешь кратко и по-существу\nПравила:\n1. Технические ответы давай конкретно и по пунктам.'
+def _build_messages(user_id: int, text: str, character: dict | None = None) -> List[dict[str, str]]:
+    if character  is None:
+        character = get_user_character(user_id)
+
+    system = (
+        f'Ты отвечаешь строго в образе персонажа: {character["name"]}.\n'
+        f'{character["prompt"]}\n'
+        'Правила:\n'
+        '1. Всегда держи стиль и манеру речи выбранного персонажа. При необходимости - переформулируй.\n'
+        '2. Технические ответы давай корректно и по пунктам, но в характерной манере.\n'
+        '3. Не раскрывай, что ты "играешь роль".\n'
+        '4. Не используй длинные дословные цитаты из фильмов/книг (>10 слов).\n'
+        'Если стиль персонажа выражен слабо - переформулируй ответ и усиль характер персонажа, сохраняя фактическую точность.\n'
+    )
 
     return [
         {'role': 'system', 'content': system},
@@ -395,22 +414,115 @@ def send_cmd_ask(message: telebot.types.Message):
     if not token:
         text = 'Отсутствует текст вопроса. Пример использования:\n /ask Вопрос'
 
-    llm_message = _build_messages(token[:600])
-    model_key = get_active_model()['key']
+    else:
+        llm_message = _build_messages(message.from_user.id, token[:600])
+        model_key = get_active_model()['key']
 
-    try:
-        text, ms = chat_once(llm_message, model=model_key, temperature=0.2, max_tokens=400)
-        text = text.strip()[:4096]
+        try:
+            text, ms = chat_once(llm_message, model=model_key, temperature=0.2, max_tokens=400)
+            text = text.strip()[:4096]
 
-    except OpenRouterError as e:
-        text = f'Ошибка: {e}'
+        except OpenRouterError as e:
+            text = f'Ошибка: {e}'
 
-    except Exception as e:
-        text = 'Непредвиденная ошибка'
-        logger.error(e)
+        except Exception as e:
+            text = 'Непредвиденная ошибка'
+            logger.error(e)
 
     bot.reply_to(message, text)
-    logger.info(f'sent ask for {message.from_user.id} ({message.from_user.first_name}).')
+    logger.info(f'Sent ask for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['ask_random'])
+def send_cmd_ask_random(message: telebot.types.Message):
+    token = message.text.replace('/ask_random', '').strip()
+    characters = list_characters()
+
+    if not token:
+        text = 'Отсутствует текст вопроса. Пример использования:\n /ask Вопрос'
+
+    elif not characters:
+        text = 'Каталог персонажей пуст'
+
+    else:
+        chosen = random.choice(characters)
+        character = get_character_by_id(chosen['id'])
+
+        llm_message = _build_messages(message.from_user.id, token, character)
+        model_key = get_active_model()['key']
+
+        try:
+            text, ms = chat_once(llm_message, model=model_key, temperature=0.2, max_tokens=400)
+            text = text.strip()[:4096]
+
+        except OpenRouterError as e:
+            text = f'Ошибка: {e}'
+
+        except Exception as e:
+            text = 'Непредвиденная ошибка'
+            logger.error(e)
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent random ask for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['characters'])
+def send_cmd_characters(message: telebot.types.Message):
+    characters = list_characters()
+
+    if not characters:
+        text = 'Каталог персонажей пуст.'
+
+    else:
+        try:
+            current_character = get_user_character(message.from_user.id)['id']
+
+        except Exception:
+            current_character = None
+
+        lines = ['Доступные персонажи:']
+
+        for character in characters:
+            star = '*' if current_character is not None and character['id'] == current_character else ' '
+            lines.append(f'{star} {character["id"]}. {character["name"]}')
+
+        lines.append('Для выбора используйте /character <ID>')
+        text = '\n'.join(lines)
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent characters for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['character'])
+def send_cmd_character(message: telebot.types.Message):
+    token = message.text.replace('/character', '').strip()
+
+    if not token:
+        character = get_user_character(message.from_user.id)
+        text = f'Текущий персонаж: {character["name"]}\n Чтобы сменить используйте /character <ID>'
+
+    elif not token.isdigit():
+        text = 'ID не является числом. Пример использования:\n /character 1'
+
+    else:
+        try:
+            character = set_user_character(message.from_user.id, int(token))
+            text = f'Персонаж установлен: {character["name"]}'
+
+        except ValueError:
+            text = 'Неизвестный ID персонажа. Используйте /characters для получения списка персонажей'
+
+    bot.reply_to(message, text)
+    logger.info(f'Sent character for {message.from_user.id} ({message.from_user.first_name}).')
+
+
+@bot.message_handler(commands=['whoami'])
+def send_cmd_whoami(message: telebot.types.Message):
+    character = get_user_character(message.from_user.id)
+    model = get_active_model()
+
+    bot.reply_to(message,f'Модель: {model["label"]} [{model["key"]}]\nПерсонаж: {character["name"]}')
+    logger.info(f'Sent whoami for {message.from_user.id} ({message.from_user.first_name}).')
 
 
 @bot.message_handler(func=lambda message: message.text == 'Помощь')
