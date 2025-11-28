@@ -206,7 +206,7 @@ def get_model_by_id(id: int) -> dict[str, str | bool]:
         }
 
 
-def set_active_models(model_id: int) -> dict[str, str | bool]:
+def set_active_model(model_id: int) -> dict[str, str | bool]:
     with _connect() as conn:
         conn.execute('BEGIN IMMEDIATE')
         exits = conn.execute(
@@ -220,12 +220,9 @@ def set_active_models(model_id: int) -> dict[str, str | bool]:
             conn.rollback()
             raise ValueError('Неизвестный ID модели')
 
-        conn.execute(
-            '''UPDATE models
-            SET active = CASE WHEN id=?
-            THEN 1 ELSE 0 END''',
-            (model_id,)
-        )
+        conn.execute('UPDATE models SET active = 0 WHERE active = 1')
+        conn.execute('UPDATE models SET active = 1 WHERE id = ?', (model_id,))
+
         conn.commit()
 
         return get_active_model()

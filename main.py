@@ -6,7 +6,7 @@ import telebot
 
 from config import config, logger
 from db import add_note, count_notes, delete_note, find_note, init_db, list_notes, set_user_character, update_note
-from db import get_active_model, get_model_by_id, list_models, set_active_models
+from db import get_active_model, get_model_by_id, list_models, set_active_model
 from db import get_character_by_id, get_user_character, list_characters, update_character_name_by_id
 from openrouter_client import chat_once, OpenRouterError
 
@@ -401,7 +401,7 @@ def send_cmd_model(message: telebot.types.Message):
         text = f'ID модели должен быть числом.\nПример активации модели: /model 1'
 
     else:
-        active_model = set_active_models(int(token))
+        active_model = set_active_model(int(token))
         text = f'Активная модель переключена: {active_model["label"]} {active_model["key"]}'
 
     bot.reply_to(message, text)
